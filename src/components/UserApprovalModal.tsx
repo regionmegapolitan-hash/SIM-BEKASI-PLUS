@@ -28,7 +28,9 @@ import {
   Check,
   Trash2,
   CheckSquare,
-  Square
+  Square,
+  Copy,
+  Info
 } from 'lucide-react';
 
 interface UserApprovalModalProps {
@@ -55,6 +57,7 @@ export const UserApprovalModal: React.FC<UserApprovalModalProps> = ({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [batchDeleteModalOpen, setBatchDeleteModalOpen] = useState(false);
   const [isAddingUser, setIsAddingUser] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // New User Form State
   const [newUserName, setNewUserName] = useState('');
@@ -105,20 +108,66 @@ export const UserApprovalModal: React.FC<UserApprovalModalProps> = ({
     }
   };
 
+  const handleCopyLoginInfo = (acc: UserAccount) => {
+    const roleLabel =
+      acc.role === 'admin_lokasi'
+        ? 'Admin Lokasi Belajar'
+        : acc.role === 'pengajar'
+        ? 'Guru / Pengajar'
+        : 'Admin Wilayah';
+
+    const textToCopy = `*PEMBERITAHUAN SIM-SESI NF BEKASI PLUS*
+Halo ${acc.name}, akun Anda telah DISETUJUI dan AKTIF di SIM-SESI.
+
+Silakan masuk menggunakan data berikut:
+• Email Terdaftar: ${acc.email}
+• Kode / Nopeg: ${acc.identifier}
+• Unit / Lokasi: ${acc.unitName}
+• Peran: ${roleLabel}
+• Password: (Gunakan password saat mendaftar atau password yang telah diatur oleh Admin)
+
+*Panduan Masuk:*
+1. Buka laman login SIM-SESI
+2. Masukkan Email atau Kode/Nopeg di kolom pertama
+3. Masukkan Password Anda dan klik "Masuk ke Dasbor"`;
+
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(textToCopy);
+    }
+    setCopiedId(acc.id);
+    onStatusChanged(`Info & panduan login untuk "${acc.name}" berhasil disalin! Anda dapat mengirimkannya ke pengguna.`);
+    setTimeout(() => {
+      setCopiedId(null);
+    }, 2500);
+  };
+
+  const selectableAccounts = useMemo(
+    () => filteredAccounts.filter((a) => a.id !== currentUser.id && a.email.toLowerCase() !== currentUser.email?.toLowerCase()),
+    [filteredAccounts, currentUser]
+  );
+
+  const isAllSelected =
+    selectableAccounts.length > 0 &&
+    selectableAccounts.every((a) => selectedIds.includes(a.id));
+
   const handleDeleteAccount = () => {
     if (!accountToDelete) return;
     const isCurrent =
       accountToDelete.id === currentUser.id ||
       accountToDelete.email.toLowerCase() === currentUser.email?.toLowerCase();
+    
+    if (isCurrent) {
+      onStatusChanged('Akun yang sedang aktif digunakan login saat ini diproteksi secara otomatis dan tidak dapat dihapus.');
+      setAccountToDelete(null);
+      return;
+    }
+
     const res = deleteAccount(accountToDelete.id);
     if (res.success) {
       setAccounts(res.updatedAccounts);
       onStatusChanged(res.message);
       setSelectedIds((prev) => prev.filter((id) => id !== accountToDelete.id));
       setAccountToDelete(null);
-      if (isCurrent && onCurrentUserDeleted) {
-        onCurrentUserDeleted();
-      }
     } else {
       onStatusChanged(res.message);
       setAccountToDelete(null);
@@ -133,23 +182,29 @@ export const UserApprovalModal: React.FC<UserApprovalModalProps> = ({
 
   const handleBatchDelete = () => {
     if (selectedIds.length === 0) return;
-    const includesCurrent = selectedIds.some((id) => {
+    // Exclude current active user to enforce automatic protection
+    const safeIds = selectedIds.filter((id) => {
       const target = accounts.find((a) => a.id === id);
       return (
         target &&
-        (target.id === currentUser.id ||
-          target.email.toLowerCase() === currentUser.email?.toLowerCase())
+        target.id !== currentUser.id &&
+        target.email.toLowerCase() !== currentUser.email?.toLowerCase()
       );
     });
-    const res = batchDeleteAccounts(selectedIds);
+
+    if (safeIds.length === 0) {
+      onStatusChanged('Tidak ada akun yang dapat dihapus. Akun aktif saat ini diproteksi secara otomatis.');
+      setBatchDeleteModalOpen(false);
+      setSelectedIds([]);
+      return;
+    }
+
+    const res = batchDeleteAccounts(safeIds);
     if (res.success) {
       setAccounts(res.updatedAccounts);
       onStatusChanged(res.message);
       setSelectedIds([]);
       setBatchDeleteModalOpen(false);
-      if (includesCurrent && onCurrentUserDeleted) {
-        onCurrentUserDeleted();
-      }
     } else {
       onStatusChanged(res.message);
       setBatchDeleteModalOpen(false);
@@ -157,18 +212,23 @@ export const UserApprovalModal: React.FC<UserApprovalModalProps> = ({
   };
 
   const toggleSelectAccount = (id: string) => {
+    const target = accounts.find((a) => a.id === id);
+    if (target && (target.id === currentUser.id || target.email.toLowerCase() === currentUser.email?.toLowerCase())) {
+      onStatusChanged('Akun aktif login saat ini diproteksi secara otomatis dan tidak dapat dipilih untuk dihapus.');
+      return;
+    }
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
     );
   };
 
   const toggleSelectAll = () => {
-    const allIds = filteredAccounts.map((a) => a.id);
-    const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.includes(id));
+    const allSelectableIds = selectableAccounts.map((a) => a.id);
+    const allSelected = allSelectableIds.length > 0 && allSelectableIds.every((id) => selectedIds.includes(id));
     if (allSelected) {
-      setSelectedIds((prev) => prev.filter((id) => !allIds.includes(id)));
+      setSelectedIds((prev) => prev.filter((id) => !allSelectableIds.includes(id)));
     } else {
-      setSelectedIds((prev) => Array.from(new Set([...prev, ...allIds])));
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...allSelectableIds])));
     }
   };
 
@@ -204,10 +264,6 @@ export const UserApprovalModal: React.FC<UserApprovalModalProps> = ({
   };
 
   if (!isOpen) return null;
-
-  const isAllSelected =
-    filteredAccounts.length > 0 &&
-    filteredAccounts.every((a) => selectedIds.includes(a.id));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
@@ -417,6 +473,40 @@ export const UserApprovalModal: React.FC<UserApprovalModalProps> = ({
 
         {/* Table Content */}
         <div className="p-4 sm:p-6 overflow-y-auto flex-1">
+          {/* Quick Guide on How Approved Users Log In */}
+          <div className="mb-4 p-3.5 bg-gradient-to-r from-sky-50 via-indigo-50/60 to-emerald-50 rounded-2xl border border-indigo-100 flex items-start space-x-3 text-xs text-slate-700 shadow-2xs">
+            <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-xs mt-0.5">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between flex-wrap gap-1">
+                <h4 className="font-bold text-slate-900 text-xs flex items-center">
+                  <span>Petunjuk Login untuk Akun yang Sudah Disetujui</span>
+                  <span className="ml-2 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    Siap Digunakan
+                  </span>
+                </h4>
+              </div>
+              <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                Pengguna yang statusnya telah <strong className="text-emerald-700 font-bold">Disetujui</strong> dapat langsung masuk ke sistem SIM-SESI tanpa kendala dengan data berikut:
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2 text-[11px]">
+                <div className="bg-white/90 p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
+                  <strong className="text-indigo-900 block font-bold mb-0.5">1. Kolom Email Terdaftar / ID:</strong>
+                  <span className="text-slate-600">
+                    Pengguna dapat memasukkan <strong>Email Terdaftar</strong> ATAU <strong>Kode Lokasi</strong> (misal: <code>119</code>, <code>122</code>) / <strong>Nopeg Guru</strong> (misal: <code>710178</code>).
+                  </span>
+                </div>
+                <div className="bg-white/90 p-2.5 rounded-xl border border-indigo-100 shadow-2xs">
+                  <strong className="text-indigo-900 block font-bold mb-0.5">2. Kolom Password:</strong>
+                  <span className="text-slate-600">
+                    Masukkan password yang dibuat saat mendaftar. Jika lupa, Anda dapat klik tombol <strong>"Reset Password"</strong> di tabel bawah untuk mengatur sandi baru.
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {filteredAccounts.length === 0 ? (
             <div className="text-center py-12 text-slate-400">
               <Users className="w-10 h-10 mx-auto mb-2 text-slate-300" />
@@ -455,14 +545,23 @@ export const UserApprovalModal: React.FC<UserApprovalModalProps> = ({
                     return (
                       <tr key={acc.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="px-3 py-3 text-center">
-                          <input
-                            type="checkbox"
-                            aria-label={`Pilih akun ${acc.name}`}
-                            checked={selectedIds.includes(acc.id)}
-                            onChange={() => toggleSelectAccount(acc.id)}
-                            className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                            title={`Pilih akun ${acc.name}`}
-                          />
+                          {isCurrentUser ? (
+                            <span
+                              className="inline-flex items-center justify-center text-indigo-500"
+                              title="Akun aktif yang sedang login diproteksi otomatis dari pemilihan hapus"
+                            >
+                              <ShieldCheck className="w-4 h-4" />
+                            </span>
+                          ) : (
+                            <input
+                              type="checkbox"
+                              aria-label={`Pilih akun ${acc.name}`}
+                              checked={selectedIds.includes(acc.id)}
+                              onChange={() => toggleSelectAccount(acc.id)}
+                              className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                              title={`Pilih akun ${acc.name}`}
+                            />
+                          )}
                         </td>
 
                         <td className="px-4 py-3">
@@ -558,6 +657,29 @@ export const UserApprovalModal: React.FC<UserApprovalModalProps> = ({
                               <>
                                 <button
                                   type="button"
+                                  onClick={() => handleCopyLoginInfo(acc)}
+                                  className={`px-2.5 py-1.5 rounded-xl border font-bold text-xs transition-all cursor-pointer inline-flex items-center space-x-1 shadow-2xs ${
+                                    copiedId === acc.id
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                                      : 'border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100 text-indigo-700'
+                                  }`}
+                                  title="Salin data login dan panduan masuk untuk pengguna ini (bisa dikirim via WhatsApp)"
+                                >
+                                  {copiedId === acc.id ? (
+                                    <>
+                                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span className="text-emerald-700 font-bold">Tersalin!</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3.5 h-3.5 text-indigo-600" />
+                                      <span>Salin Info Login</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
                                   onClick={() => {
                                     setResetModalAccount(acc);
                                     setNewPassInput('');
@@ -593,15 +715,25 @@ export const UserApprovalModal: React.FC<UserApprovalModalProps> = ({
                             )}
 
                             {/* Tombol Delete / Hapus Akun */}
-                            <button
-                              type="button"
-                              onClick={() => setAccountToDelete(acc)}
-                              className="px-2.5 py-1.5 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:border-rose-400 font-bold text-xs transition-all inline-flex items-center space-x-1 shadow-2xs cursor-pointer"
-                              title={`Hapus akun "${acc.name}" secara permanen dari sistem`}
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                              <span>Hapus</span>
-                            </button>
+                            {isCurrentUser ? (
+                              <span
+                                className="px-2.5 py-1.5 rounded-xl border border-indigo-200 bg-indigo-50 text-indigo-700 font-bold text-xs inline-flex items-center space-x-1 cursor-default select-none shadow-2xs"
+                                title="Akun yang sedang aktif digunakan login saat ini diproteksi secara otomatis dari penghapusan"
+                              >
+                                <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                                <span>Diproteksi (Aktif)</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setAccountToDelete(acc)}
+                                className="px-2.5 py-1.5 rounded-xl border border-rose-300 bg-rose-50 hover:bg-rose-100 text-rose-700 hover:border-rose-400 font-bold text-xs transition-all inline-flex items-center space-x-1 shadow-2xs cursor-pointer"
+                                title={`Hapus akun "${acc.name}" secara permanen dari sistem`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                                <span>Hapus</span>
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

@@ -242,6 +242,9 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                     required
                   />
                 </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  * Masukkan email terdaftar atau kode identitas (Kode Lokasi / Nopeg Guru).
+                </p>
               </div>
 
               {/* Password Input */}

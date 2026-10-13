@@ -335,14 +335,52 @@ export function authenticateUser(
   const cleanPass = password.trim();
   const accounts = getStoredAccounts();
 
-  // Find by Email OR by Identifier (446, 119, 709027, etc.)
+  // 1. Direct match by Email, Identifier (Kode/Nopeg), Unit Name, or Full Name
   let account = accounts.find(
-    (a) => a.email.toLowerCase() === cleanInput || a.identifier.toLowerCase() === cleanInput
+    (a) =>
+      a.email.toLowerCase() === cleanInput ||
+      a.identifier.toLowerCase() === cleanInput ||
+      a.unitName.toLowerCase() === cleanInput ||
+      a.name.toLowerCase() === cleanInput
   );
 
+  // 2. If not found directly, try matching through LOKASI_DATA (e.g. "NF Vila Nusa Indah" or "122")
   if (!account) {
-    const locMatch = LOKASI_DATA.find((l) => l.kodeLokasi.toLowerCase() === cleanInput || l.namaLokasi.toLowerCase() === cleanInput);
-    if (locMatch && cleanPass === 'lokasi123') {
+    const locMatch = LOKASI_DATA.find(
+      (l) => l.kodeLokasi.toLowerCase() === cleanInput || l.namaLokasi.toLowerCase() === cleanInput
+    );
+    if (locMatch) {
+      // Find if there is an account created for this location code
+      const matchingAccount = accounts.find(
+        (a) => a.identifier.toLowerCase() === locMatch.kodeLokasi.toLowerCase()
+      );
+      if (matchingAccount) {
+        account = matchingAccount;
+      }
+    }
+  }
+
+  // 3. If not found, try matching through TEACHERS_LIST (e.g. teacher name or nopeg)
+  if (!account) {
+    const teacherMatch = TEACHERS_LIST.find(
+      (t) => t.nopeg.toLowerCase() === cleanInput || t.nama.toLowerCase() === cleanInput
+    );
+    if (teacherMatch) {
+      const matchingAccount = accounts.find(
+        (a) => a.identifier.toLowerCase() === teacherMatch.nopeg.toLowerCase()
+      );
+      if (matchingAccount) {
+        account = matchingAccount;
+      }
+    }
+  }
+
+  // 4. Fallback for demo/default mock accounts if no stored account matched
+  if (!account) {
+    const locMatch = LOKASI_DATA.find(
+      (l) => l.kodeLokasi.toLowerCase() === cleanInput || l.namaLokasi.toLowerCase() === cleanInput
+    );
+    if (locMatch && (cleanPass === 'lokasi123' || cleanPass === 'admin123')) {
       const user: UserSession = {
         id: `acc-lokasi-${locMatch.kodeLokasi}`,
         role: 'admin_lokasi',
@@ -355,8 +393,10 @@ export function authenticateUser(
       return { success: true, user };
     }
 
-    const teacherMatch = TEACHERS_LIST.find((t) => t.nopeg.toLowerCase() === cleanInput);
-    if (teacherMatch && cleanPass === 'guru123') {
+    const teacherMatch = TEACHERS_LIST.find(
+      (t) => t.nopeg.toLowerCase() === cleanInput || t.nama.toLowerCase() === cleanInput
+    );
+    if (teacherMatch && (cleanPass === 'guru123' || cleanPass === 'admin123')) {
       const user: UserSession = {
         id: `acc-guru-${teacherMatch.nopeg}`,
         role: 'pengajar',
@@ -370,7 +410,7 @@ export function authenticateUser(
 
     return {
       success: false,
-      message: 'Email atau ID belum terdaftar. Silakan lakukan pendaftaran akun baru terlebih dahulu.'
+      message: 'Email atau ID belum terdaftar di sistem. Silakan periksa kembali atau lakukan pendaftaran akun baru.'
     };
   }
 
@@ -387,7 +427,7 @@ export function authenticateUser(
     return {
       success: false,
       status: 'rejected',
-      message: `Pendaftaran akun "${account.email}" DITOLAK oleh Admin Wilayah. ${account.notes || ''}`
+      message: `Pendaftaran akun "${account.email}" DITOLAK atau DIBATALKAN oleh Admin Wilayah. ${account.notes || ''}`
     };
   }
 
@@ -395,7 +435,7 @@ export function authenticateUser(
   if (account.password !== cleanPass) {
     return {
       success: false,
-      message: 'Password yang Anda masukkan salah. Silakan coba lagi.'
+      message: 'Password yang Anda masukkan salah. Silakan coba lagi atau hubungi Admin Wilayah untuk mereset password.'
     };
   }
 
